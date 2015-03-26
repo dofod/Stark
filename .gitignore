@@ -1,3 +1,6 @@
 http-client/
 .idea/
 plugins/
+scheduler_jobs.sqlite
+stark.db
+*.py[cod]

@@ -1,4 +1,5 @@
 import importlib
+from apscheduler.schedulers.background import BackgroundScheduler
 from django.db import models
 
 class Plugin(models.Model):
@@ -6,6 +7,7 @@ class Plugin(models.Model):
     triggers = None
     events = None
     pluginModule = None
+    timer = BackgroundScheduler()
     def __init__(self, *args, **kwargs):
         super(Plugin, self).__init__(*args, **kwargs)
         if self.name:
@@ -15,6 +17,9 @@ class Plugin(models.Model):
                 return
             self.events = PluginEvents.objects.filter(plugin_id=self.pk)
             self.triggers = PluginTriggers.objects.filter(plugin_id=self.pk)
+
+    def get(self):
+        return super(Plugin, self).get()
 
     def authorize(self):
         self.is_authorized = True

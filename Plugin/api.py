@@ -3,10 +3,10 @@ import base64
 import os
 import importlib
 import inspect
-from django.db import transaction
 from tastypie.resources import Resource, Bundle, ModelResource, ALL, fields
 from tastypie.exceptions import BadRequest
 from tastypie.authentication import ApiKeyAuthentication, MultiAuthentication
+from Stark.settings import scheduler
 from Common.auth import OpenAuthentication, OpenAuthorization
 from Common.resources import CORSModelResource
 from Common.api import TastypieAPIObject
@@ -15,6 +15,22 @@ from Device.auth import DeviceTokenAuthentication
 from .models import Plugin, Event, Trigger, PluginEvents, PluginTriggers
 
 class PluginResource(ModelResource):
+    """
+    RESOURCE: /api/v1/plugin/
+    DESCRIPTION: The plugin resource allows users and devices to add plugins to the automation system.
+    AUTHENTICATION: Device and User can both access this resource.
+    AUTHENTICATION GET PARAMETERS:
+        For Device:
+            devicename, auth_token
+        For User:
+            username, api_key
+    POST DATA FORMAT:
+    application/json
+    {
+        "name": <STRING plugin filename>,
+        "file": <BASE64 ENCODED STRING file>
+    }
+    """
     class Meta:
         queryset = Plugin.objects.all()
         resource_name = 'plugin'
@@ -23,12 +39,23 @@ class PluginResource(ModelResource):
         authorization = OpenAuthorization()
 
     def inspectPlugin(self, pluginModule):
+        """
+        Check if plugin is properly formatted, ie. the core functions 'trigger' and 'event' are correctly defined with
+        their arguments.
+        """
         if 'trigger' not in dir(pluginModule) \
                 or inspect.getargspec(pluginModule.trigger).args[0] != 'trigger_name' \
                 or 'event' not in dir(pluginModule) \
                 or inspect.getargspec(pluginModule.event).args[0] != 'data':
             return False
         return True
+
+    def rollback(self, bundle):
+        """
+        Rollback the database and the filesystem if error occurs during plugin installation
+        """
+        Plugin.objects.get(name=bundle.data['name']).delete()
+        os.remove(os.path.join(os.getcwd(), 'plugins', bundle.data['name']+'.py'))
 
     def obj_create(self, bundle, **kwargs):
         try:
@@ -44,8 +71,7 @@ class PluginResource(ModelResource):
         pluginModule = importlib.import_module('plugins.'+bundle.data['name'])
 
         if not self.inspectPlugin(pluginModule):
-            Plugin.objects.get(name=bundle.data['name']).delete()
-            os.remove(pluginFilePath)
+            self.rollback(bundle)
             raise BadRequest('ERROR: Malformed plugin, trigger undefined')
 
         try:
@@ -60,6 +86,30 @@ class PluginResource(ModelResource):
         except AttributeError:
             print 'WARNING: requires_triggers not defined'
 
+        try:
+            plugin = Plugin.objects.get(name=bundle.data['name'])
+            for event in pluginModule.requires_timers:
+                try:
+                    scheduler.add_job(
+                        func=getattr(pluginModule, 'event'),
+                        args=[{'event':event['event']}],
+                        trigger='cron',
+                        month= event['time']['month'] if 'month' in event['time'] else '*',
+                        day= event['time']['day'] if 'day' in event['time'] else '*',
+                        hour=event['time']['hour'] if 'hour' in event['time'] else '*',
+                        minute=event['time']['minute'] if 'minute' in event['time'] else '*',
+                        second=event['time']['second'] if 'second' in event['time'] else '*',
+                        name=plugin.name+'_'+event['event']
+                    )
+                except AttributeError:
+                    self.rollback(bundle)
+                    raise BadRequest('ERROR: Syntax Error in requires_timers')
+                except:
+                    self.rollback(bundle)
+                    raise BadRequest('ERROR: In Scheduling')
+        except AttributeError:
+            print 'WARNING: requires_timers not defined'
+
         return bundle
 
     def dehydrate(self, bundle):
@@ -68,6 +118,20 @@ class PluginResource(ModelResource):
         return bundle
 
 class EventResource(ModelResource):
+    """
+    RESOURCE: /api/v1/event
+    DESCRIPTION: Events are processed here.
+    AUTHENTICATION: Device can only access this resource.
+    AUTHENTICATION GET PARAMETERS:
+        For Device:
+            devicename, auth_token
+    POST DATA FORMAT:
+    application/json
+    {
+        "event": <STRING Event name>,
+        "data": <DICT Optional data to be passed to event>
+    }
+    """
     class Meta:
         queryset = Event.objects.all()
         resource_name = 'event'
@@ -82,17 +146,110 @@ class EventResource(ModelResource):
         return bundle
 
 class TriggerResource(ModelResource):
+    """
+    RESOURCE: /api/v1/trigger
+    DESCRIPTION: Triggers are processed here.
+    AUTHENTICATION: Device can only access this resource.
+    AUTHENTICATION GET PARAMETERS:
+        For Device:
+            devicename, auth_token
+    POST DATA FORMAT:
+    application/json
+    {
+        "trigger": <STRING Trigger>
+    }
+    """
     class Meta:
         queryset = Trigger.objects.all()
         resource_name = 'trigger'
         allowed_methods = ['post']
-        authentication = OpenAuthentication()
+        authentication = DeviceTokenAuthentication()
         authorization = OpenAuthorization()
         include_resource_uri = False
     def obj_create(self, bundle, **kwargs):
         for plugin in PluginTriggers.objects.filter(trigger=Trigger.objects.get(name=bundle.data['trigger'])):
             plugin.plugin.trigger(triggerName=bundle.data['trigger'])
         return bundle
+
+class TimerResource(Resource):
+    """
+    RESOURCE: /api/v1/timer
+    DESCRIPTION: Set a timer for an event to take place at a particular time. Note that the system supports cron-style
+    format for setting up a timer task.
+    AUTHENTICATION: Device and User can both access this resource.
+    AUTHENTICATION GET PARAMETERS:
+        For Device:
+            devicename, auth_token
+        For User:
+            username, api_key
+    POST DATA FORMAT:
+    application/json
+    {
+        "event": <STRING Event name>,
+        "month": <INT 1-12>,
+        "day": <INT day 1-7>,
+        "hour": <INT Hour 1-24>,
+        "minute": <INT Minute 1-60>,
+        "second": <INT Second 1-60>,
+    }
+    """
+    job = fields.CharField(attribute='job', null=True)
+    class Meta:
+        resource_name = 'timer'
+        allowed_methods = ['get', 'post']
+        object_class = TastypieAPIObject
+        authentication = MultiAuthentication(DeviceTokenAuthentication(), ApiKeyAuthentication())
+        authorization = OpenAuthorization()
+        include_resource_uri = False
+
+    def detail_uri_kwargs(self, bundle_or_obj):
+        kwargs = {}
+
+        if isinstance(bundle_or_obj, Bundle):
+            kwargs['pk'] = bundle_or_obj.obj.pk
+        else:
+            kwargs['pk'] = bundle_or_obj.pk
+
+        return kwargs
+
+    def get_object_list(self, request):
+        results = []
+        for job in scheduler.get_jobs():
+            result = TastypieAPIObject()
+            result.job = job.name
+            results.append(result)
+        return results
+
+    def obj_get_list(self, bundle, **kwargs):
+        return self.get_object_list(bundle.request)
+
+    def obj_create(self, bundle, **kwargs):
+        event = Event.objects.get(name=bundle.data['event'])
+        plugins = Plugin.objects.filter(name__in=[e.plugin.name for e in PluginEvents.objects.filter(event=event)])
+        try:
+            for plugin in plugins:
+                pluginModule = importlib.import_module('plugins.'+plugin.name)
+                try:
+                    scheduler.add_job(
+                        func=pluginModule.event,
+                        args=[{'event':event.name}],
+                        trigger='cron',
+                        month= bundle.data['month'] if 'month' in bundle.data else '*',
+                        day= bundle.data['day'] if 'day' in bundle.data else '*',
+                        hour=bundle.data['hour'] if 'hour' in bundle.data else '*',
+                        minute=bundle.data['minute'] if 'minute' in bundle.data else '0',
+                        second=bundle.data['second'] if 'second' in bundle.data else '0',
+                        name=plugin.name+'_'+event.name+' '
+                    )
+                except AttributeError:
+                    self.rollback(bundle)
+                    raise BadRequest('ERROR: Syntax Error in requires_timers')
+        except AttributeError:
+            print 'WARNING: requires_timers not defined'
+        return bundle
+
+    def obj_delete_list(self, bundle, **kwargs):
+        pass
 
 class PluginTriggersResource(CORSModelResource):
     plugin = fields.ForeignKey(to=PluginResource, attribute='plugin', full=True)

@@ -9,6 +9,18 @@ from Common.auth import OpenAuthentication, OpenAuthorization
 from .auth import PasswordAuthentication, ApiKeyAuthorization
 
 class AddUserResource(ModelResource):
+    """
+    RESOURCE: /api/v1/add-user
+    DESCRIPTION: Users are added here.
+    AUTHENTICATION: Anyone can access this resource.
+    POST DATA FORMAT:
+    application/json
+    {
+        "username": <STRING Username>,
+        "password": <STRING Password>,
+        "email": <STRING Email>
+    }
+    """
     class Meta:
         queryset = User.objects.all()
         resource_name = 'add-user'
@@ -24,6 +36,14 @@ class AddUserResource(ModelResource):
         return bundle
 
 class UserResource(ModelResource):
+    """
+    RESOURCE: /api/v1/user/
+    DESCRIPTION: Get information on users
+    AUTHENTICATION: Only users can access this resource
+    AUTHENTICATION GET PARAMETERS:
+        For User:
+            username, api_key
+    """
     class Meta:
         queryset = User.objects.all()
         resource_name = 'user'
@@ -45,6 +65,14 @@ class UserResource(ModelResource):
         return bundle
 
 class ApiKeyResource(ModelResource):
+    """
+    RESOURCE: /api/v1/api-key/
+    DESCRIPTION: Get api-key for user
+    AUTHENTICATION: Only users can access this resource
+    AUTHENTICATION GET PARAMETERS:
+        For User:
+            username, password
+    """
     class Meta:
         queryset = ApiKey.objects.all()
         resource_name = 'api-key'

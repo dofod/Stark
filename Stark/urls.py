@@ -5,7 +5,7 @@ from django.conf.urls import patterns, include, url
 from tastypie.api import Api
 from Device.api import DeviceResource, DevicePluginRegistrationResource, AddDeviceResource
 from User.api import UserResource, AddUserResource, ApiKeyResource
-from Plugin.api import PluginResource, EventResource, TriggerResource, PluginEventsResource, PluginTriggersResource
+from Plugin.api import PluginResource, EventResource, TriggerResource, PluginEventsResource, PluginTriggersResource, TimerResource
 
 apiV1 = Api(api_name='v1')
 
@@ -22,6 +22,7 @@ apiV1.register(EventResource())
 apiV1.register(TriggerResource())
 apiV1.register(PluginTriggersResource())
 apiV1.register(PluginEventsResource())
+apiV1.register(TimerResource())
 
 urlpatterns = patterns('',
     url(r'^api/', include(apiV1.urls)),
