@@ -61,7 +61,10 @@ class PluginResource(ModelResource):
         try:
             super(PluginResource, self).obj_create(bundle, **kwargs)
         except:
-            raise BadRequest('Duplicate Plugin')
+            if bundle.request.GET['force'] == 'true':
+                pass
+            else:
+                raise BadRequest('Duplicate Plugin')
 
         plugin = Plugin.objects.get(name=bundle.data['name'])
         pluginFilePath = os.path.join(os.getcwd(), 'plugins', bundle.data['name']+'.py')
@@ -76,13 +79,13 @@ class PluginResource(ModelResource):
 
         try:
             for event in pluginModule.requires_events:
-                PluginEvents.objects.create(plugin=plugin, event=Event.objects.get_or_create(name=event)[0])
+                PluginEvents.objects.get_or_create(plugin=plugin, event=Event.objects.get_or_create(name=event)[0])
         except AttributeError:
             print 'WARNING: requires_events not defined'
 
         try:
             for trigger in pluginModule.requires_triggers:
-                PluginTriggers.objects.create(plugin=plugin, trigger=Trigger.objects.get_or_create(name=trigger)[0])
+                PluginTriggers.objects.get_or_create(plugin=plugin, trigger=Trigger.objects.get_or_create(name=trigger)[0])
         except AttributeError:
             print 'WARNING: requires_triggers not defined'
 
@@ -149,10 +152,12 @@ class TriggerResource(ModelResource):
     """
     RESOURCE: /api/v1/trigger
     DESCRIPTION: Triggers are processed here.
-    AUTHENTICATION: Device can only access this resource.
+    AUTHENTICATION: Device and User can both access this resource
     AUTHENTICATION GET PARAMETERS:
         For Device:
             devicename, auth_token
+        For User:
+            username, api_key
     POST DATA FORMAT:
     application/json
     {
@@ -163,7 +168,7 @@ class TriggerResource(ModelResource):
         queryset = Trigger.objects.all()
         resource_name = 'trigger'
         allowed_methods = ['post']
-        authentication = DeviceTokenAuthentication()
+        authentication = MultiAuthentication(DeviceTokenAuthentication(), ApiKeyAuthentication())
         authorization = OpenAuthorization()
         include_resource_uri = False
     def obj_create(self, bundle, **kwargs):
