@@ -12,7 +12,8 @@ from Common.resources import CORSModelResource
 from Common.api import TastypieAPIObject
 from Common.models import IncompleteDataException
 from Device.auth import DeviceTokenAuthentication
-from .models import Plugin, Event, Trigger, PluginEvents, PluginTriggers
+from .models import Plugin, Event, Trigger, PluginEvents, PluginTriggers, Middleware
+from .worker import onEvent, onTrigger
 
 class PluginResource(ModelResource):
     """
@@ -75,7 +76,7 @@ class PluginResource(ModelResource):
 
         if not self.inspectPlugin(pluginModule):
             self.rollback(bundle)
-            raise BadRequest('ERROR: Malformed plugin, trigger undefined')
+            raise BadRequest('ERROR: Malformed plugin')
 
         try:
             for event in pluginModule.requires_events:
@@ -120,6 +121,59 @@ class PluginResource(ModelResource):
         bundle.data['triggers'] = [pluginTrigger.trigger.name for pluginTrigger in PluginTriggers.objects.filter(plugin_id=bundle.obj.id)]
         return bundle
 
+class MiddlewareResource(ModelResource):
+    class Meta:
+        queryset = Middleware.objects.all()
+        resource_name = 'middleware'
+        allowed_methods = ['get', 'post', 'patch', 'delete']
+        authentication = ApiKeyAuthentication()
+        authorization = OpenAuthorization()
+
+    def inspectMiddleware(self, middlewareModule):
+        """
+        Check if plugin is properly formatted, ie. the core functions 'filter_trigger' and 'filter_event' are correctly defined with
+        their arguments.
+        """
+        if 'alter_trigger' not in dir(middlewareModule) \
+                or inspect.getargspec(middlewareModule.alter_trigger).args[0] != 'trigger_name' \
+                or 'alter_event' not in dir(middlewareModule) \
+                or inspect.getargspec(middlewareModule.alter_event).args[0] != 'data':
+            return False
+        return True
+
+    def rollback(self, bundle):
+        """
+        Rollback the database and the filesystem if error occurs during middleware installation
+        """
+        Middleware.objects.get(name=bundle.data['name']).delete()
+        os.remove(os.path.join(os.getcwd(), 'middlewares', bundle.data['name']+'.py'))
+
+    def obj_create(self, bundle, **kwargs):
+        try:
+            super(MiddlewareResource, self).obj_create(bundle, **kwargs)
+        except:
+            if bundle.request.GET['force'] == 'true':
+                pass
+            else:
+                raise BadRequest('Duplicate Middleware')
+
+        middlewareFilePath = os.path.join(os.getcwd(), 'middlewares', bundle.data['name']+'.py')
+        middlewareFile = open(middlewareFilePath , 'w+')
+        middlewareFile.write(base64.b64decode(bundle.data['file']))
+        middlewareFile.close()
+        middlewareModule = importlib.import_module('middlewares.'+bundle.data['name'])
+
+        if not self.inspectMiddleware(middlewareModule):
+            self.rollback(bundle)
+            raise BadRequest('ERROR: Malformed Middleware')
+
+        return bundle
+
+    def obj_delete(self, bundle, **kwargs):
+        os.remove(os.path.join(os.getcwd(), 'middlewares', Middleware.objects.get(id=int(kwargs['pk'])).name+'.py'))
+        super(MiddlewareResource, self).obj_delete(bundle, **kwargs)
+
+
 class EventResource(ModelResource):
     """
     RESOURCE: /api/v1/event
@@ -144,10 +198,10 @@ class EventResource(ModelResource):
         include_resource_uri = False
 
     def obj_create(self, bundle, **kwargs):
-        for plugin in PluginEvents.objects.filter(event=Event.objects.get(name=bundle.data['event'])):
-            plugin.plugin.event(data=bundle.data)
+        onEvent(bundle.data)
         return bundle
 
+import datetime
 class TriggerResource(ModelResource):
     """
     RESOURCE: /api/v1/trigger
@@ -172,8 +226,12 @@ class TriggerResource(ModelResource):
         authorization = OpenAuthorization()
         include_resource_uri = False
     def obj_create(self, bundle, **kwargs):
-        for plugin in PluginTriggers.objects.filter(trigger=Trigger.objects.get(name=bundle.data['trigger'])):
-            plugin.plugin.trigger(triggerName=bundle.data['trigger'])
+        time = datetime.datetime.now()
+        try:
+            onTrigger(bundle.data['trigger'])
+        except KeyError:
+            print 'Error: No Trigger'
+        print datetime.datetime.now()-time
         return bundle
 
 class TimerResource(Resource):
@@ -229,28 +287,24 @@ class TimerResource(Resource):
         return self.get_object_list(bundle.request)
 
     def obj_create(self, bundle, **kwargs):
-        event = Event.objects.get(name=bundle.data['event'])
-        plugins = Plugin.objects.filter(name__in=[e.plugin.name for e in PluginEvents.objects.filter(event=event)])
         try:
-            for plugin in plugins:
-                pluginModule = importlib.import_module('plugins.'+plugin.name)
-                try:
-                    scheduler.add_job(
-                        func=pluginModule.event,
-                        args=[{'event':event.name}],
-                        trigger='cron',
-                        month= bundle.data['month'] if 'month' in bundle.data else '*',
-                        day= bundle.data['day'] if 'day' in bundle.data else '*',
-                        hour=bundle.data['hour'] if 'hour' in bundle.data else '*',
-                        minute=bundle.data['minute'] if 'minute' in bundle.data else '0',
-                        second=bundle.data['second'] if 'second' in bundle.data else '0',
-                        name=plugin.name+'_'+event.name+' '
-                    )
-                except AttributeError:
-                    self.rollback(bundle)
-                    raise BadRequest('ERROR: Syntax Error in requires_timers')
+            event = Event.objects.get(name=bundle.data['event'])
+        except KeyError:
+            raise BadRequest('ERROR: No Event Defined')
+        try:
+            scheduler.add_job(
+                func=onEvent,
+                args=[bundle.data],
+                trigger='cron',
+                month= bundle.data['month'] if 'month' in bundle.data else '*',
+                day= bundle.data['day'] if 'day' in bundle.data else '*',
+                hour=bundle.data['hour'] if 'hour' in bundle.data else '*',
+                minute=bundle.data['minute'] if 'minute' in bundle.data else '0',
+                second=bundle.data['second'] if 'second' in bundle.data else '0',
+                name=event.name
+            )
         except AttributeError:
-            print 'WARNING: requires_timers not defined'
+            raise BadRequest('ERROR: Syntax Error in timer')
         return bundle
 
     def obj_delete_list(self, bundle, **kwargs):

@@ -21,7 +21,6 @@ class DeviceTokenAuthentication(Authentication):
         try:
             cacheAuthToken = self.cache[devicename]
             if cacheAuthToken == authToken:
-                print 'hit'
                 return True
         except:
             pass
@@ -29,7 +28,6 @@ class DeviceTokenAuthentication(Authentication):
             device = Device.objects.get(name=devicename, auth_token=authToken)
             if device.is_authorized:
                 self.cache[devicename] = authToken
-                print 'miss'
                 return True
             return False
         except:

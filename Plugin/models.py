@@ -1,5 +1,4 @@
 import importlib
-from apscheduler.schedulers.background import BackgroundScheduler
 from django.db import models
 
 class Plugin(models.Model):
@@ -7,7 +6,6 @@ class Plugin(models.Model):
     triggers = None
     events = None
     pluginModule = None
-    timer = BackgroundScheduler()
     def __init__(self, *args, **kwargs):
         super(Plugin, self).__init__(*args, **kwargs)
         if self.name:
@@ -30,6 +28,25 @@ class Plugin(models.Model):
 
     def event(self, data=None):
         self.pluginModule.event(data=data)
+
+class Middleware(models.Model):
+    name = models.CharField(max_length=128, null=False, unique=True)
+    is_enabled = models.BooleanField(default=True)
+    middlewareModule = None
+
+    def __init__(self, *args, **kwargs):
+        super(Middleware, self).__init__(*args, **kwargs)
+        if self.name:
+            try:
+                self.middlewareModule = importlib.import_module('middlewares.'+self.name)
+            except ImportError:
+                return
+
+    def alter_event(self, data):
+        return self.middlewareModule.alter_event(data)
+
+    def alter_trigger(self, trigger_name):
+        return self.middlewareModule.alter_trigger(trigger_name)
 
 class Event(models.Model):
     name = models.CharField(max_length=128, null=False, unique=True)

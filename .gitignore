@@ -1,6 +1,8 @@
+ftpcommands.txt
 http-client/
 .idea/
 plugins/
+middlewares/
 scheduler_jobs.sqlite
 stark.sqlite
-*.py[cod]
+*.pyc

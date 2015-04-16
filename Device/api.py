@@ -43,7 +43,7 @@ class DeviceResource(ModelResource):
         For User:
             username, api_key
         For Device:
-            devicename, password
+            devicename, key
     PATCH-DATA FORMAT:
     application/json
     {

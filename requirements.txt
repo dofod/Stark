@@ -1,2 +1,7 @@
+django==1.8
+django-tastypie==0.12.1
+wsgiref==0.1.2
+importlib==1.0.3
 APScheduler==3.0.2
 SQLAlchemy==0.9.9
+async==0.6.0.2
