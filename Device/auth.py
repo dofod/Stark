@@ -48,6 +48,7 @@ class DevicePasswordAuthentication(Authentication):
 class DeviceAuthorization(Authorization):
     def read_list(self, object_list, bundle):
         if isDevice(bundle.request):
+            print 'isdevivce'
             return object_list.filter(id=bundle.request.device.id)
         else:
             return object_list

@@ -9,16 +9,17 @@ def applyTriggerMiddleware(trigger_name):
     those triggers are not sent to the other middlewares. This is done so as to eliminate problem of circular trigger
     generation.
     '''
-    trigger_list = []
+    trigger_list = {}
     if not Middleware.objects.all().exists():
-        trigger_list.append(trigger_name)
+        trigger_list[trigger_name] = True
     for middleware in Middleware.objects.all():
-        trigger = middleware.alter_trigger(trigger_name)
-        if type(trigger) is list:
-            trigger_list.extend(trigger)
-        elif type(trigger) is str:
-            trigger_list.append(trigger)
-    return trigger_list
+        altered_trigger = middleware.alter_trigger(trigger_name)
+        if type(altered_trigger) is list:
+            for trigger in altered_trigger:
+                trigger_list[str(trigger)] = True
+        elif type(altered_trigger) is str or type(altered_trigger) is unicode:
+            trigger_list[str(altered_trigger)] = True
+    return list(trigger_list)
 
 def applyEventMiddleware(data):
     '''
@@ -29,8 +30,8 @@ def applyEventMiddleware(data):
     return data
 
 def onTrigger(trigger_name):
-    #trigger_list = applyTriggerMiddleware(trigger_name)
-    for plugin in PluginTriggers.objects.filter(trigger_id__in = [trigger.id for trigger in Trigger.objects.filter(name=trigger_name)]):
+    trigger_list = applyTriggerMiddleware(trigger_name)
+    for plugin in PluginTriggers.objects.filter(trigger_id__in = Trigger.objects.filter(name__in=trigger_list)):
     #for plugin in PluginTriggers.objects.filter(trigger__in=Trigger.objects.filter(name__in=trigger_list)):
         plugin.plugin.trigger(triggerName=trigger_name)
 

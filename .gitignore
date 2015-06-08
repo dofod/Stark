@@ -3,6 +3,7 @@ http-client/
 .idea/
 plugins/
 middlewares/
+env/
 scheduler_jobs.sqlite
 stark.sqlite
 *.pyc

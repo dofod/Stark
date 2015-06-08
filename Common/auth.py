@@ -1,8 +1,6 @@
 __author__ = 'Saurabh'
-__author__ = 'Saurabh'
 from tastypie.authentication import Authentication
 from tastypie.authorization import Authorization
-
 
 class OpenAuthentication(Authentication):
     def is_authenticated(self, request, **kwargs):
